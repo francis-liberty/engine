@@ -151,10 +151,26 @@ class VirtualDisplayController {
 
     public void dispose() {
         PlatformView view = presentation.getView();
+        // Fix rare crash on HuaWei device described in: https://github.com/flutter/engine/pull/9192
+        presentation.cancel();
         presentation.detachState();
         view.dispose();
         virtualDisplay.release();
         textureEntry.release();
+    }
+
+    /*package*/ void onInputConnectionLocked() {
+        if (presentation == null || presentation.getView() == null) {
+            return;
+        }
+        presentation.getView().onInputConnectionLocked();
+    }
+
+    /*package*/ void onInputConnectionUnlocked() {
+        if (presentation == null || presentation.getView() == null) {
+            return;
+        }
+        presentation.getView().onInputConnectionUnlocked();
     }
 
     public View getView() {

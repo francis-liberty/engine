@@ -33,6 +33,7 @@ static constexpr char kLifecycleChannel[] = "flutter/lifecycle";
 static constexpr char kNavigationChannel[] = "flutter/navigation";
 static constexpr char kLocalizationChannel[] = "flutter/localization";
 static constexpr char kSettingsChannel[] = "flutter/settings";
+static constexpr char kIsolateChannel[] = "flutter/isolate";
 
 Engine::Engine(Delegate& delegate,
                DartVM& vm,
@@ -41,13 +42,15 @@ Engine::Engine(Delegate& delegate,
                TaskRunners task_runners,
                Settings settings,
                std::unique_ptr<Animator> animator,
-               fml::WeakPtr<SnapshotDelegate> snapshot_delegate,
                fml::WeakPtr<IOManager> io_manager)
     : delegate_(delegate),
       settings_(std::move(settings)),
       animator_(std::move(animator)),
-      activity_running_(false),
+      activity_running_(true),
       have_surface_(false),
+      image_decoder_(task_runners,
+                     vm.GetConcurrentWorkerTaskRunner(),
+                     io_manager),
       weak_factory_(this) {
   // Runtime controller is initialized here because it takes a reference to this
   // object as its delegate. The delegate may be called in the constructor and
@@ -58,8 +61,8 @@ Engine::Engine(Delegate& delegate,
       std::move(isolate_snapshot),           // isolate snapshot
       std::move(shared_snapshot),            // shared snapshot
       std::move(task_runners),               // task runners
-      std::move(snapshot_delegate),          // snapshot delegate
       std::move(io_manager),                 // io manager
+      image_decoder_.GetWeakPtr(),           // image decoder
       settings_.advisory_script_uri,         // advisory script uri
       settings_.advisory_script_entrypoint,  // advisory script entrypoint
       settings_.idle_notification_callback,  // idle notification callback
@@ -145,6 +148,14 @@ Engine::RunStatus Engine::Run(RunConfiguration configuration) {
       isolate->AddIsolateShutdownCallback(
           settings_.root_isolate_shutdown_callback);
     }
+
+    std::string service_id = isolate->GetServiceId();
+    fml::RefPtr<PlatformMessage> service_id_message =
+        fml::MakeRefCounted<flutter::PlatformMessage>(
+            kIsolateChannel,
+            std::vector<uint8_t>(service_id.begin(), service_id.end()),
+            nullptr);
+    HandlePlatformMessage(service_id_message);
   }
 
   return isolate_running ? Engine::RunStatus::Success
@@ -437,8 +448,8 @@ void Engine::UpdateIsolateDescription(const std::string isolate_name,
   delegate_.UpdateIsolateDescription(isolate_name, isolate_port);
 }
 
-void Engine::SetNeedsReportTimings(bool value) {
-  delegate_.SetNeedsReportTimings(value);
+void Engine::SetNeedsReportTimings(bool needs_reporting) {
+  delegate_.SetNeedsReportTimings(needs_reporting);
 }
 
 FontCollection& Engine::GetFontCollection() {

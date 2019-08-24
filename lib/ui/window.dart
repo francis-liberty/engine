@@ -10,16 +10,18 @@ typedef VoidCallback = void Function();
 /// Signature for [Window.onBeginFrame].
 typedef FrameCallback = void Function(Duration duration);
 
+// ignore: deprecated_member_use_from_same_package
 /// Signature for [Window.onReportTimings].
 ///
-/// {@template dart.ui.TimingsCallback.list}
-/// The callback takes a list of [FrameTiming] because it may not be
-/// immediately triggered after each frame. Instead, Flutter tries to batch
-/// frames together and send all their timings at once to decrease the
-/// overhead (as this is available in the release mode). The list is sorted in
-/// ascending order of time (earliest frame first). The timing of any frame
-/// will be sent within about 1 second (100ms if in the profile/debug mode)
-/// even if there are no later frames to batch.
+/// The callback takes a list of [FrameTiming] because it may not be immediately
+/// triggered after each frame. The list is sorted in ascending order of time
+/// (earliest frame first).
+/// {@template dart.ui.timings_batching}
+/// Flutter tries to batch frames together and send all their timings at once to
+/// decrease the overhead (as this is available in the release mode). The timing
+/// of any frame will be sent within about 1 second (100ms if in the
+/// profile/debug mode) even if there are no later frames to batch. The timing
+/// of the first frame will be sent immediately without batching.
 /// {@endtemplate}
 typedef TimingsCallback = void Function(List<FrameTiming> timings);
 
@@ -37,6 +39,9 @@ typedef PlatformMessageResponseCallback = void Function(ByteData data);
 
 /// Signature for [Window.onPlatformMessage].
 typedef PlatformMessageCallback = void Function(String name, ByteData data, PlatformMessageResponseCallback callback);
+
+// Signature for _setNeedsReportTimings.
+typedef _SetNeedsReportTimingsFunc = void Function(bool value);
 
 /// Various important time points in the lifetime of a frame.
 ///
@@ -65,7 +70,7 @@ enum FramePhase {
 
 /// Time-related performance metrics of a frame.
 ///
-/// See [Window.onReportTimings] for how to get this.
+/// See [Window.frameTimings] for how to get this.
 ///
 /// The metrics in debug mode (`flutter run` without any flags) may be very
 /// different from those in profile and release modes due to the debug overhead.
@@ -78,7 +83,7 @@ class FrameTiming {
   /// [FramePhase.values].
   ///
   /// This constructor is usually only called by the Flutter engine, or a test.
-  /// To get the [FrameTiming] of your app, see [Window.onReportTimings].
+  /// To get the [FrameTiming] of your app, see [Window.frameTimings].
   FrameTiming(List<int> timestamps)
       : assert(timestamps.length == FramePhase.values.length), _timestamps = timestamps;
 
@@ -485,22 +490,20 @@ class Locale {
   /// underscores as separator, however it is intended to be used for debugging
   /// purposes only. For parseable results, use [toLanguageTag] instead.
   @override
-  String toString() => _toLanguageTag('_');
+  String toString() {
+    if (!identical(cachedLocale, this)) {
+      cachedLocale = this;
+      cachedLocaleString = _rawToString('_');
+    }
+    return cachedLocaleString;
+  }
 
   /// Returns a syntactically valid Unicode BCP47 Locale Identifier.
   ///
   /// Some examples of such identifiers: "en", "es-419", "hi-Deva-IN" and
   /// "zh-Hans-CN". See http://www.unicode.org/reports/tr35/ for technical
   /// details.
-  String toLanguageTag() => _toLanguageTag();
-
-  String _toLanguageTag([String separator = '-']) {
-    if (!identical(cachedLocale, this)) {
-      cachedLocale = this;
-      cachedLocaleString = _rawToString(separator);
-    }
-    return cachedLocaleString;
-  }
+  String toLanguageTag() => _rawToString('-');
 
   String _rawToString(String separator) {
     final StringBuffer out = StringBuffer(languageCode);
@@ -514,8 +517,15 @@ class Locale {
 
 /// The most basic interface to the host operating system's user interface.
 ///
+/// It exposes the size of the display, the core scheduler API, the input event
+/// callback, the graphics drawing API, and other such core services.
+///
 /// There is a single Window instance in the system, which you can
-/// obtain from the [window] property.
+/// obtain from `WidgetsBinding.instance.window`.
+///
+/// There is also a [window] singleton object in `dart:ui` if `WidgetsBinding`
+/// is unavailable. But we strongly advise to avoid statically referencing it.
+/// See the document of [window] for more details of why it should be avoided.
 ///
 /// ## Insets and Padding
 ///
@@ -559,7 +569,9 @@ class Locale {
 /// [Window.viewPadding] anyway, so there is no need to account for that in the
 /// [Window.padding], which is always safe to use for such calculations.
 class Window {
-  Window._();
+  Window._() {
+    _setNeedsReportTimings = _nativeSetNeedsReportTimings;
+  }
 
   /// The number of device pixels for each logical pixel. This number might not
   /// be a power of two. Indeed, it might not even be an integer. For example,
@@ -607,12 +619,26 @@ class Window {
   Size get physicalSize => _physicalSize;
   Size _physicalSize = Size.zero;
 
+  /// The physical depth is the maximum elevation that the Window allows.
+  ///
+  /// Physical layers drawn at or above this elevation will have their elevation
+  /// clamped to this value. This can happen if the physical layer itself has
+  /// an elevation larger than available depth, or if some ancestor of the layer
+  /// causes it to have a cumulative elevation that is larger than the available
+  /// depth.
+  ///
+  /// The default value is [double.maxFinite], which is used for platforms that
+  /// do not specify a maximum elevation. This property is currently on expected
+  /// to be set to a non-default value on Fuchsia.
+  double get physicalDepth => _physicalDepth;
+  double _physicalDepth = double.maxFinite;
+
   /// The number of physical pixels on each side of the display rectangle into
   /// which the application can render, but over which the operating system
   /// will likely place system UI, such as the keyboard, that fully obscures
   /// any content.
   ///
-  /// When this changes, [onMetricsChanged] is called.
+  /// When this property changes, [onMetricsChanged] is called.
   ///
   /// The relationship between this [Window.viewInsets], [Window.viewPadding],
   /// and [Window.padding] are described in more detail in the documentation for
@@ -639,7 +665,7 @@ class Window {
   /// response to the soft keyboard being visible or hidden, whereas
   /// [Window.padding] will.
   ///
-  /// When this changes, [onMetricsChanged] is called.
+  /// When this property changes, [onMetricsChanged] is called.
   ///
   /// The relationship between this [Window.viewInsets], [Window.viewPadding],
   /// and [Window.padding] are described in more detail in the documentation for
@@ -654,6 +680,24 @@ class Window {
   ///    applications.
   WindowPadding get viewPadding => _viewPadding;
   WindowPadding _viewPadding = WindowPadding.zero;
+
+  /// The number of physical pixels on each side of the display rectangle into
+  /// which the application can render, but where the operating system will
+  /// consume input gestures for the sake of system navigation.
+  ///
+  /// For example, an operating system might use the vertical edges of the
+  /// screen, where swiping inwards from the edges takes users backward
+  /// through the history of screens they previously visited.
+  ///
+  /// When this property changes, [onMetricsChanged] is called.
+  ///
+  /// See also:
+  ///
+  ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
+  ///    observe when this value changes.
+  ///  * [MediaQuery.of], a simpler mechanism for the same.
+  WindowPadding get systemGestureInsets => _systemGestureInsets;
+  WindowPadding _systemGestureInsets = WindowPadding.zero;
 
   /// The number of physical pixels on each side of the display rectangle into
   /// which the application can render, but which may be partially obscured by
@@ -686,9 +730,10 @@ class Window {
   WindowPadding _padding = WindowPadding.zero;
 
   /// A callback that is invoked whenever the [devicePixelRatio],
-  /// [physicalSize], [padding], or [viewInsets] values change, for example
-  /// when the device is rotated or when the application is resized (e.g. when
-  /// showing applications side-by-side on Android).
+  /// [physicalSize], [padding], [viewInsets], or [systemGestureInsets]
+  /// values change, for example when the device is rotated or when the
+  /// application is resized (e.g. when showing applications side-by-side
+  /// on Android).
   ///
   /// The engine invokes this callback in the same zone in which the callback
   /// was set.
@@ -889,24 +934,17 @@ class Window {
   /// A callback that is invoked to report the [FrameTiming] of recently
   /// rasterized frames.
   ///
-  /// This can be used to see if the application has missed frames (through
-  /// [FrameTiming.buildDuration] and [FrameTiming.rasterDuration]), or high
-  /// latencies (through [FrameTiming.totalSpan]).
-  ///
-  /// Unlike [Timeline], the timing information here is available in the release
-  /// mode (additional to the profile and the debug mode). Hence this can be
-  /// used to monitor the application's performance in the wild.
-  ///
-  /// {@macro dart.ui.TimingsCallback.list}
-  ///
-  /// If this is null, no additional work will be done. If this is not null,
-  /// Flutter spends less than 0.1ms every 1 second to report the timings
-  /// (measured on iPhone6S). The 0.1ms is about 0.6% of 16ms (frame budget for
-  /// 60fps), or 0.01% CPU usage per second.
+  /// This is deprecated, use [frameTimings] instead.
+  @Deprecated('Use frameTimings instead.')
   TimingsCallback get onReportTimings => _onReportTimings;
   TimingsCallback _onReportTimings;
   Zone _onReportTimingsZone;
+  @Deprecated('Use frameTimings instead.')
   set onReportTimings(TimingsCallback callback) {
+    _internalSetOnReportTimings(callback);
+  }
+
+  void _internalSetOnReportTimings(TimingsCallback callback) {
     if ((callback == null) != (_onReportTimings == null)) {
       _setNeedsReportTimings(callback != null);
     }
@@ -914,7 +952,61 @@ class Window {
     _onReportTimingsZone = Zone.current;
   }
 
-  void _setNeedsReportTimings(bool value) native 'Window_setNeedsReportTimings';
+  // ignore: deprecated_member_use_from_same_package
+  /// Mock the calling of [onReportTimings] for unit tests.
+  void debugReportTimings(List<FrameTiming> timings) {
+    _onReportTimings(timings);
+  }
+
+  /// Check whether the engine has to report timings.
+  ///
+  /// This is for unit tests and debug purposes only.
+  bool get debugNeedsReportTimings => _onReportTimings != null;
+
+  StreamController<FrameTiming> _frameTimingBroadcastController;
+
+  void _onFrameTimingListen() {
+    _internalSetOnReportTimings((List<FrameTiming> timings) {
+      timings.forEach(_frameTimingBroadcastController.add);
+    });
+  }
+
+  // If there's no one listening, set [onReportTimings] back to null so the
+  // engine won't send [FrameTiming] from engine to the framework.
+  void _onFrameTimingCancel() {
+    _internalSetOnReportTimings(null);
+  }
+
+  /// A broadcast stream of the frames' time-related performance metrics.
+  ///
+  /// This can be used to see if the application has missed frames (through
+  /// [FrameTiming.buildDuration] and [FrameTiming.rasterDuration]), or high
+  /// latencies (through [FrameTiming.totalSpan]).
+  ///
+  /// Unlike [Timeline], the timing information here is available in the release
+  /// mode (additional to profile and debug mode). Hence this can be used to
+  /// monitor the application's performance in the wild.
+  ///
+  /// {@macro dart.ui.timings_batching}
+  ///
+  /// If no one is listening to this stream, no additional work will be done.
+  /// Otherwise, Flutter spends less than 0.1ms every 1 second to report the
+  /// timings (measured on iPhone 6s). The 0.1ms is about 0.6% of 16ms (frame
+  /// budget for 60fps), or 0.01% CPU usage per second.
+  ///
+  /// See also:
+  ///
+  ///  * [FrameTiming], the data event of this stream
+  Stream<FrameTiming> get frameTimings {
+    _frameTimingBroadcastController ??= StreamController<FrameTiming>.broadcast(
+      onListen: _onFrameTimingListen,
+      onCancel: _onFrameTimingCancel,
+    );
+    return _frameTimingBroadcastController.stream;
+  }
+
+  _SetNeedsReportTimingsFunc _setNeedsReportTimings;
+  void _nativeSetNeedsReportTimings(bool value) native 'Window_setNeedsReportTimings';
 
   /// A callback that is invoked when pointer data is available.
   ///
@@ -1219,7 +1311,19 @@ enum Brightness {
   light,
 }
 
-/// The [Window] singleton. This object exposes the size of the display, the
-/// core scheduler API, the input event callback, the graphics drawing API, and
-/// other such core services.
+/// The [Window] singleton.
+///
+/// Please try to avoid statically referencing this and instead use a
+/// binding for dependency resolution such as `WidgetsBinding.instance.window`.
+///
+/// Static access of this "window" object means that Flutter has few, if any
+/// options to fake or mock the given object in tests. Even in cases where Dart
+/// offers special language constructs to forcefully shadow such properties,
+/// those mechanisms would only be reasonable for tests and they would not be
+/// reasonable for a future of Flutter where we legitimately want to select an
+/// appropriate implementation at runtime.
+///
+/// The only place that `WidgetsBinding.instance.window` is inappropriate is if
+/// a `Window` is required before invoking `runApp()`. In that case, it is
+/// acceptable (though unfortunate) to use this object statically.
 final Window window = Window._();

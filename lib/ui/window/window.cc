@@ -185,6 +185,7 @@ void Window::UpdateWindowMetrics(const ViewportMetrics& metrics) {
           tonic::ToDart(metrics.device_pixel_ratio),
           tonic::ToDart(metrics.physical_width),
           tonic::ToDart(metrics.physical_height),
+          tonic::ToDart(metrics.physical_depth),
           tonic::ToDart(metrics.physical_padding_top),
           tonic::ToDart(metrics.physical_padding_right),
           tonic::ToDart(metrics.physical_padding_bottom),
@@ -193,6 +194,10 @@ void Window::UpdateWindowMetrics(const ViewportMetrics& metrics) {
           tonic::ToDart(metrics.physical_view_inset_right),
           tonic::ToDart(metrics.physical_view_inset_bottom),
           tonic::ToDart(metrics.physical_view_inset_left),
+          tonic::ToDart(metrics.physical_system_gesture_inset_top),
+          tonic::ToDart(metrics.physical_system_gesture_inset_right),
+          tonic::ToDart(metrics.physical_system_gesture_inset_bottom),
+          tonic::ToDart(metrics.physical_system_gesture_inset_left),
       }));
 }
 

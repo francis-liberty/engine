@@ -141,10 +141,10 @@ fml::RefPtr<EngineLayer> SceneBuilder::pushOpacity(int alpha,
   return EngineLayer::MakeRetained(layer);
 }
 
-fml::RefPtr<EngineLayer> SceneBuilder::pushColorFilter(int color,
-                                                       int blendMode) {
-  auto layer = std::make_shared<flutter::ColorFilterLayer>(
-      static_cast<SkColor>(color), static_cast<SkBlendMode>(blendMode));
+fml::RefPtr<EngineLayer> SceneBuilder::pushColorFilter(
+    const ColorFilter* color_filter) {
+  auto layer =
+      std::make_shared<flutter::ColorFilterLayer>(color_filter->filter());
   PushLayer(layer);
   return EngineLayer::MakeRetained(layer);
 }
@@ -256,8 +256,8 @@ void SceneBuilder::addChildScene(double dx,
     return;
   }
   auto layer = std::make_unique<flutter::ChildSceneLayer>(
-      sceneHost->id(), sceneHost->use_view_holder(), SkPoint::Make(dx, dy),
-      SkSize::Make(width, height), hitTestable);
+      sceneHost->id(), SkPoint::Make(dx, dy), SkSize::Make(width, height),
+      hitTestable);
   current_layer_->Add(std::move(layer));
 }
 #endif  // defined(OS_FUCHSIA)

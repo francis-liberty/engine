@@ -17,7 +17,11 @@ TransformLayer::TransformLayer(const SkMatrix& transform)
   //
   // We have to write this flaky test because there is no reliable way to test
   // whether a variable is initialized or not in C++.
-  FML_CHECK(transform_.isFinite());
+  FML_DCHECK(transform_.isFinite());
+  if (!transform_.isFinite()) {
+    FML_LOG(ERROR) << "TransformLayer is constructed with an invalid matrix.";
+    transform_.setIdentity();
+  }
 }
 
 TransformLayer::~TransformLayer() = default;
@@ -25,7 +29,7 @@ TransformLayer::~TransformLayer() = default;
 void TransformLayer::Preroll(PrerollContext* context, const SkMatrix& matrix) {
   SkMatrix child_matrix;
   child_matrix.setConcat(matrix, transform_);
-
+  context->mutators_stack.PushTransform(transform_);
   SkRect previous_cull_rect = context->cull_rect;
   SkMatrix inverse_transform_;
   // Perspective projections don't produce rectangles that are useful for
@@ -43,6 +47,7 @@ void TransformLayer::Preroll(PrerollContext* context, const SkMatrix& matrix) {
   set_paint_bounds(child_paint_bounds);
 
   context->cull_rect = previous_cull_rect;
+  context->mutators_stack.Pop();
 }
 
 #if defined(OS_FUCHSIA)
@@ -62,6 +67,7 @@ void TransformLayer::Paint(PaintContext& context) const {
 
   SkAutoCanvasRestore save(context.internal_nodes_canvas, true);
   context.internal_nodes_canvas->concat(transform_);
+
   PaintChildren(context);
 }
 
